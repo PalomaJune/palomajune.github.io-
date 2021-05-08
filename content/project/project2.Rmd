@@ -1,0 +1,323 @@
+---
+title: "Project2"
+author: "Paloma June"
+date: "04/04/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  # this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth)) {
+    x = knitr:::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n)) x = strwrap(x, width = n)
+    x = paste(x, collapse = '\n')
+  }
+  hook_output(x, options)
+})
+
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE,fig.align="center",warning=FALSE,message=FALSE,fig.width=8, fig.height=5, linewidth=60)
+options(tibble.width = 100,width = 100)
+library(tidyverse)
+```
+
+<font size="5">*Introduction*</font>
+
+$~$
+
+
+```{r}
+#install.packages("Epi")
+library(Epi)
+data(births)
+library(tidyverse)
+```
+
+$~$
+
+This data set contains data from 500 singleton births in a London Hospital. It has 8 variables: id, an identification variable for the mother and child; bweight, the birthweight of the child; lowbw, which tracks low birth weight with a value of 1 for babies born below 2500 g and 0 for babies born above; gestwks which which is the gestation period; preterm, which designates whether or not the baby was preterm; matage, the age of the mother; hyp, whether or not the mother had hypertension; and sex 1 for male, 2 for female.
+
+$~$
+
+<font size="5">*MANOVA*</font>
+
+```{r}
+man <- manova(cbind(bweight, gestwks, matage) ~ preterm, data = births)
+summary(man)
+summary(aov(man))
+pairwise.t.test(births$bweight, births$preterm, p.adj = "none")
+pairwise.t.test(births$gestwks, births$preterm, p.adj = "none")
+pairwise.t.test(births$matage, births$preterm, p.adj = "none")
+```
+
+The MANOVA had a p-value of 2.2e-16. For each test, the chance of making a Type I error is 0.05, so in order to keep the overall Type I error rate, a Bonferroni correction must be made, dividing the usual alpha of .05 by the number of tests performed(9), which would make it 0.0056. The MANOVA was significant, so preterm births varies significantly by at least one of the variables. According to the ANOVA and pairwise tests, there was a significant difference in preterm births by birth weight and gestational weeks, but not maternal age. MANOVA has a lot of assumptions, such as random samples and independent observations, which I cannot really speak on because I was not involved in the collection of this data, that there is multivariate normality of dependent/response variables, that there is homogeneity of within-group covariance matrices, a linear relationship among dependent/response variables, that there are no extreme outliers, and that the dependent/response variables are not too related. It is unlikely this data meets the assumptions required for the MANOVA testing as there are so many assumptions.
+
+
+
+
+$~$
+
+<font size="5">*Randomization*</font>
+
+```{r}
+set.seed(348)
+premie <- births %>% na.omit() %>% filter(preterm == 1)
+ontime <- births %>% na.omit() %>% filter(preterm == 0)
+mead <- mean(ontime$bweight) - mean(premie$bweight)
+
+mead
+
+diffs<-vector()
+dat <- births %>% na.omit() %>% select(bweight, preterm)
+
+for(i in 1:5000){
+temp <- dat %>% mutate(preterm = sample(dat$preterm))
+diffs[i] <- temp %>% summarize(mean(bweight[preterm == 0]) - mean(bweight[preterm == 1])) %>% pull
+}
+#quantile(diffs, probs = c(.025, 0.975))
+
+mean(diffs > mead) #pvalue for original bweight
+```
+The null hypothesis is that being preterm had no effect on the birth weight of a baby, and the alternative hypothesis is that being preterm had an effect on the birth weight of the baby. The p-value is 0, which is very small and well below the threshold of 0.05, so we can reject the null hypothesis. this indicates that there is in fact a mean difference in birth weight for preterm and full term babies.
+
+```{r}
+diffs <- data_frame(diffs)
+diffs %>% ggplot(aes(x=diffs)) + geom_histogram() + geom_vline(xintercept = mead, color = "red") + labs(x = "mean differences", title = "Random Mean Differences")
+```
+From this graph we can see the random mean differences are very different from the true mean difference (shown in red).
+
+$~$
+
+<font size="5">*Linear Regression*</font>
+
+```{r}
+library(lmtest)
+birthdat <- births %>% mutate(c_matage = matage - mean(matage, na.rm=T), c_bweight = bweight - mean(bweight, na.rm=T), c_gestwks = gestwks - mean(gestwks, na.rm=T))
+fit <- lm(c_gestwks~c_bweight*sex, data=birthdat)
+summary(fit)
+exp(coeftest(fit))
+```
+The intercept is -0.65. This means that for a male baby born at an average birth weight, he is likely to be c_gestwks is likely -0.65, or he is born 0.65 weeks earlier than average. For a male baby, c_gestwks increases by 1.00 for each gram increase in birth weight. For a baby of average weight, they are likely to be born 1.61 weeks later than average if they a girl. For a female baby, they are likely to be born 1.00 week later for each gram increase in weight. Since the R^2 is 0.53, 0.53 of the variation is explained by this model.
+
+$~$
+
+```{r}
+birthdat <- birthdat %>% mutate(Sex = ifelse(sex == 1, "Male", "Female"))
+doop <- birthdat %>% na.omit() %>% ggplot(aes(c_bweight, c_gestwks)) + geom_point(aes(color = Sex)) + geom_smooth(method = 'lm',se=F, color = "dark red") + labs(x = "Centered Birth Weight (grams)", y = "Centered Gestation (weeks)", title = "Gestation by Birth Weight and Sex")
+doop
+```
+Based off this graph, we can see that this model does not meet the assumptions of linearity as both birth weight and gestation weeks have far more low values than they do high values (possibly due to natural limits on both weight and gestation and potentially due to practices such as induction). The data looks pretty linear based of this graph.
+```{r}
+bptest(fit)
+```
+Since the p-value of the Breusch-Pagan test is less than 0.05, we can reject the null hypothesis that this data is homoskedastic, and say that it is heteroskedastic.
+
+$~$
+
+```{r}
+library(sandwich)
+coeftest(fit,vcov=vcovHC(fit))
+```
+Using the robust standard errors, birth weight (p-value = 0.0498), sex (p-value = 0.0018), and the interaction of birth weight and sex (p-value = 0.0157) all have a significant effect on the gestation period. There was no significant change in the coefficient using the robust SEs.
+
+
+$~$
+
+<font size="5">*Linear Regression with Bootstrapping*</font>
+
+```{r}
+boot_dat<- sample_frac(birthdat, replace=T)
+# repeat 5000 times
+set.seed(348)
+samp_distn<-replicate(5000, {
+  boot_dat <- sample_frac(birthdat, replace=T) #take bootstrap sample of rows
+  fit <- lm(c_gestwks~c_bweight*sex, data=boot_dat) #fit model on bootstrap sample
+  coef(fit) #save coefs
+})
+## Estimated SEs
+samp_distn %>% t %>% as.data.frame %>% summarize_all(sd)
+
+```
+The bootstrapped standard errors were slightly lower than the robust standard errors, at 0.2398, 0.0006, 0.1477, and 0.0004 instead of 0.2473, 0.0061, 0.1510, and 0.0004, respectively. Lowering the standard error would lower the p-value, making it more significant.
+
+$~$
+
+<font size="5">*Predicting a Binary Variable (from two other variables)*</font>
+
+```{r}
+fitprem <- glm(preterm ~ lowbw * hyp, data = births, family = "binomial")
+summary(fitprem)
+```
+This model attempts to predict whether or not the baby was preterm based on whether they had low birth weight and if the mother had hypertension.
+```{r}
+exp(-2.88759)
+exp(3.29306)
+exp(0.64688)
+exp(-0.02273)
+```
+Having a low birth weight increased the odds that the baby was born preterm by 26.93, and being born to a mother with hypertension by 1.98. Having both a low birth weight and being born to a mother with hypertension put the odds at 0.978 compared to a baby with normal weight and a non-hypertensive mother. Low birth weight was a significant predictor, but a mother with hypertension was not a significant predictor, and neither was having both low birth weight and a hypertensive mother.
+
+$~$
+
+```{r}
+prob <- predict(fitprem, type = "response") %>% na.omit()
+birt <- births %>% na.omit()
+table(predict=as.numeric(prob>.5),truth=birt$preterm)%>%addmargins
+```
+Here is the confusion matrix
+
+```{r}
+class_diag<-function(probs,truth){
+
+tab<-table(factor(probs>.5,levels=c("FALSE","TRUE")),truth)
+acc=sum(diag(tab))/sum(tab)
+sens=tab[2,2]/colSums(tab)[2]
+spec=tab[1,1]/colSums(tab)[1]
+ppv=tab[2,2]/rowSums(tab)[2]
+
+if(is.numeric(truth)==FALSE & is.logical(truth)==FALSE) truth<-as.numeric(truth)-1
+
+#CALCULATE EXACT AUC
+ord<-order(probs, decreasing=TRUE)
+probs <- probs[ord]; truth <- truth[ord]
+
+TPR=cumsum(truth)/max(1,sum(truth)) 
+FPR=cumsum(!truth)/max(1,sum(!truth))
+
+dup<-c(probs[-1]>=probs[-length(probs)], FALSE)
+TPR<-c(0,TPR[!dup],1); FPR<-c(0,FPR[!dup],1)
+
+n <- length(TPR)
+auc<- sum( ((TPR[-1]+TPR[-n])/2) * (FPR[-1]-FPR[-n]) )
+
+data.frame(acc,sens,spec,ppv,auc)
+}
+
+class_diag(prob, birt$preterm)
+```
+The accyracy of this model is 0.906, which is pretty good. The sensitivity is 0.603, which means that a fair few true positives get missed, but the specificity is 0.951, which is pretty good. The precision is 0.644, which is not great, and the AUC is 0.795 which is fair.
+
+```{r}
+birt$logit<-predict(fitprem, type="link")
+
+birt %>% mutate(preterm = as.factor(preterm)) %>% ggplot() + geom_density(aes(logit, color = preterm, fill = preterm), alpha = .4) +
+  theme(legend.position = c(.85,.85)) + geom_vline(xintercept = 0) + xlab("logit (log-odds)") +
+  geom_rug(aes(logit, color = preterm))
+```
+
+```{r}
+library(plotROC)
+ROCplot<- births %>% na.omit() %>% ggplot() + geom_roc(aes(d = preterm, m = prob), n.cuts = 0) 
+ROCplot
+calc_auc(ROCplot)
+```
+The AUC is 0.795, which is fair. This means that the model does a decent, but not great job at predicting preterm births.
+
+$~$
+
+<font size="5">*Predicting a Binary Variable (from all other variables)*</font>
+
+```{r}
+idbirths <- births %>% na.omit() %>% select(-id, -gestwks)
+fitid <- glm(preterm~., data = idbirths, family = "binomial")
+prob <- predict(fitid, type = "response") %>% na.omit()
+class_diag(prob, idbirths$preterm)
+summary(fitid)
+```
+I omitted gestwks because it directly correlates to preterm. The model was significant. The model had an accuracy of 0.908, which is very good, a sensitivity of 0.429 which is a little bad and means this model misses a lot of true positives, a specificity of 0.979 which is very good, a precision of 0.75 which is okay, and an AUC of 0.911 which is great.
+
+```{r}
+set.seed(348)
+k=10
+
+# your code here
+data<- idbirths %>% sample_frac#randomly order rows
+folds <- ntile(1:nrow(data),n=10) #create folds
+
+diags<-NULL
+for(i in 1:k){
+  ## Create training and test sets
+  train<-data[folds != i, ] 
+  test<-data[folds == i, ]
+
+  truth<-test$preterm ## Truth labels for fold i
+
+  ## Train model on training set (all but fold i)
+  fit <-glm(preterm~., data = train, family = "binomial")
+
+  ## Test model on test set (fold i) 
+  probs<-predict(fit, newdata = test, type = "response")
+
+  ## Get diagnostics for fold i
+  diags<-rbind(diags, class_diag(probs, truth))
+
+}
+
+
+summarize_all(diags,mean) #average diagnostics across all k folds
+```
+This model performed very well out of sample. In fact, all of the values were about the same or higher out of sample. The accuracy was slightly lower at 0.906, the sensitivity was slightly higher at 0.456, the specificity was slightly lower at 0.976, the precision was slightly higher at 0.758, and the AUS was slightly higher at 0.913.
+
+```{r}
+library(glmnet)
+set.seed(348)
+# your code here
+
+
+library(glmnet)
+y<-as.matrix(idbirths$preterm) #grab response
+x<-model.matrix(preterm~.,data=idbirths)[,-1] #grab predictors
+head(x)
+
+
+cv <- cv.glmnet(x,y) #picks an optimal value for lambda through 10-fold CV
+
+{plot(cv$glmnet.fit, "lambda", label=TRUE); abline(v = log(cv$lambda.1se)); abline(v = log(cv$lambda.min),lty=2)}
+
+
+
+cv<-cv.glmnet(x,y,family="binomial")
+lasso<-glmnet(x,y,family="binomial",lambda=cv$lambda.1se)
+coef(lasso)
+```
+Both lowbw and bweight were retained in this model, which is not surprising seeing as they are both determined by that birtweight of the baby.
+
+```{r}
+set.seed(348)
+k=10
+
+# your code here
+data<- idbirths %>% sample_frac#randomly order rows
+folds <- ntile(1:nrow(data),n=10) #create folds
+
+diags<-NULL
+for(i in 1:k){
+  ## Create training and test sets
+  train<-data[folds != i, ] 
+  test<-data[folds == i, ]
+
+  truth<-test$preterm ## Truth labels for fold i
+
+  ## Train model on training set (all but fold i)
+  fit <-glm(preterm~bweight+lowbw, data = train, family = "binomial")
+
+  ## Test model on test set (fold i) 
+  probs<-predict(fit, newdata = test, type = "response")
+
+  ## Get diagnostics for fold i
+  diags<-rbind(diags, class_diag(probs, truth))
+
+}
+
+
+summarize_all(diags,mean) #average diagnostics across all k folds
+```
+This model had an AUC of 0.913, which is the same as the out of the out of sample AUC in the regression above and slightly higher than the in sample AUC of that regression. The AUC is great and seems to indicate that the model does a decent job of predicting preterm births, even though both the predicting variables are based on the same pieces of data.
+
+
+
+
+

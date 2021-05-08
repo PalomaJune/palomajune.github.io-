@@ -1,0 +1,230 @@
+---
+title: "Project1"
+author: "Paloma June"
+date: "04/04/2021"
+output: html_document
+---
+
+```{r eval=F}
+## paste this chunk into the ```{r setup} chunk at the top of your project 1 .Rmd file
+
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, fig.align = "center", warning = F, message = F,
+tidy=TRUE, tidy.opts=list(width.cutoff=60), R.options=list(max.print=100))
+```
+
+<font size="5">*Introduction*</font>
+
+$~$
+
+  All three datasets used in this project provide data on all the Texas counties. CountyArea.csv provides the land, water, and total area in miles^2 for each Texas county. I chose this dataset because I have always thought the way counties in Texas were shaped and sized were quite arbitrary, and I thought it would be interesting to learn more about the size of Texas counties. CountyElevation.csv has the elevation in feet of each county in Texas. I found this dataset interesting because I tend to think of Texas as quite a level state, though I know that is not actually true. With the rising sea levels due to global warming, I think it is valuable to better understand what our state will look like. Both these datasets were obtained from http://www.texascounties.net/statistics/totalarea.htm and http://www.texascounties.net/statistics/elevation.htm, respectively. The third dataset includes the vaccination rates for the mandatory vaccinations of Texas seventh graders by county in 2019. I chose this dataset because I am very interested in vaccines overall, especially vaccine hesitancy. This data was obtained from the Texas DSHS website, https://www.dshs.texas.gov/immunize/coverage/schools/. Overall, I don't expect a ton of associations between these datasets as while they share an ID variable, they were sort of chosen at random. However, I would not be surprised if counties with higher elevation also had lower vaccination rates, as higher elevation counties are more rural, and thus have less access to healthcare. I would also expect that the counties with lower elevation will also have higher water areas.
+  
+$~$  
+
+```{r}
+library(tidyverse)
+library(dplyr)
+cArea <- read.csv("CountyArea.csv")
+cVax <- read.csv("VaxCounty.csv")
+cElev <- read.csv("CountyElevation.csv")
+```
+Here the files are being read in. cArea is the dataset with the areas cVax has the the vaccination rates, and cElev has the elevations
+
+$~$ 
+
+<font size="4">*Tidying*</font>
+```{r}
+cVax$County <- toupper(cVax$County)
+cArea$Name <- toupper(cArea$Name)
+cElev$Name <- toupper(cElev$Name)
+cVax <- cVax %>% pivot_longer(cols = c(Tdap.Td,Meningococcal,Hepatitis.A,Hepatitis.B,MMR, Polio, Varicella), names_to = "Vaccines",values_to = "Vaccination rates")
+cArea <- cArea %>% rename(Total = Total.Area..mi2., Land = Land.Area..mi2., Water = Water.Area..mi2.)
+cArea <- cArea %>% pivot_longer(cols = c(Total, Land, Water), names_to = "Area.type", values_to = "Area.miles") 
+```
+
+$~$
+ 
+In this section, pivot_longer was used on cVax to make a column with all the vaccinations and a separate columen with the corresponding vaccination rates. cArea was elongated so all the types of area measurements were in one column, and the measures were in their own separate column.
+
+$~$ 
+
+<font size="4">*Joining*</font>
+```{r}
+areaVax <- cArea %>% inner_join(cVax, by = c("Name" = "County"))
+areaVax <- areaVax %>% inner_join(cElev, by = c("Name" = "Name"))
+areaVax <- areaVax %>% rename(Rank.area = Rank.x, Rank.elevation = Rank.y)
+glimpse(areaVax)
+```
+
+$~$
+
+Because the datasets all had at least one additional row containing different statistics (totals or averages), an inner join was performed. In the join, one row was lost from cArea and cVax, just containing the total values, and two rows were lost from cElev, one containing average values, and an extra row due to weird formatting of the column names. Two rows containing the ranks for the elevations and areas of the counties were renamed to make it more clear which one was which.
+
+$~$
+
+```{r}
+areaVax <- areaVax %>% mutate(Rank.area = as.numeric(gsub(",", "", Rank.area)), .keep = "unused")
+areaVax <- areaVax %>% mutate(Rank.elevation = as.numeric(gsub(",", "", Rank.elevation)), .keep = "unused")
+areaVax <- areaVax %>% mutate(Elevation = as.numeric(gsub(",", "", Elevation)), .keep = "unused") %>% mutate(Elevation.m = Elevation*0.3048)
+areaVax <- areaVax %>% mutate(Area.miles = as.numeric(gsub(",", "", Area.miles)), .keep = "unused") %>% mutate(Area.km = Area.miles*2.58999)
+areaVax <- areaVax %>% mutate(Percent.vaccinated = as.numeric(gsub("%", "", `Vaccination rates`)), .keep = "unused")
+```
+NAs are introduced by coercion as there are some values with "NR" in the the Vaccination rates column as they were not able to get data.
+
+$~$ 
+
+<font size="4">*Summarizing*</font>
+```{r}
+numberCounties <- areaVax %>% summarize(n_distinct(Name))
+numberCounties
+```
+This table shows the number of unique values in the name column, which contains the county names. It contains 254 counties, the total number of counties in the state of Texas.
+
+$~$
+
+```{r}
+maxAreas <- areaVax %>% group_by(Name) %>% summarize(totalArea = max(Area.miles), elevationRank = max(Rank.elevation)) %>% arrange(-totalArea)
+maxAreas
+```
+This shows the max area by county, giving the total area for each county, which is then arranged in descending order by the area. The elevation rank is also included.
+
+$~$
+
+```{r}
+areaVax %>% filter(Area.type == "Water") %>% summarise(cor(Area.miles, Elevation, use = "pair"))
+```
+This shows the correlation between area and elevation.
+
+$~$
+
+```{r}
+meanVax <- areaVax %>% group_by(Vaccines) %>% summarize(MeanPercent = mean(na.omit(Percent.vaccinated))) %>% arrange(MeanPercent)
+meanVax
+```
+This shows the average percent of seventh graders with each vaccine.
+
+$~$
+
+```{r}
+areaVax %>% summarise(max(Rank.elevation), max(Rank.area))
+```
+This shows the maximum values for the area and elevation ranks.
+
+$~$
+
+```{r}
+areaVax %>% group_by(Name) %>% summarize(VaccinationRate = mean(Percent.vaccinated), max(Rank.area)) %>% arrange(VaccinationRate)
+```
+
+
+$~$
+
+Overall, I did not find anything extremely surprising with the summary statistics. Using n_distinct to summarize the Name column was valuable as it allowed me to confirm that no counties were lost in the process of joining the data sets. The next table shows the total area of each county as well as the elevation rank, but does not reveal much. Then, there is a table with the correlation between elevation and the water area of each county. Though not surprising, it did demonstrate a slightly stronger correlation than just the correlation between total area and elevation. There was very little difference in the mean percent vaccinated between the different vaccine types. I found this a little surprising because a lot of anti-vaccine propaganda will attack only one specific vaccine or ingredient, so I had expected there to be a little more discrepancy between the vaccines. The penultimate table shows the maximum values for the area and elevation ranks, which showed that both of them had 254 values, meaning that there were no "ties". The last table includes the mean vaccination rates by county as well as the area rank.
+
+$~$ 
+
+<font size="4">*Visualizing*</font>
+
+$~$
+
+*Heatmap*
+```{r}
+corm <- areaVax %>% select_if(is.numeric) %>% na.omit() %>% cor() %>% as.data.frame %>% rownames_to_column %>% pivot_longer(-1)
+
+corm %>% ggplot(aes(rowname, name, fill = value)) + geom_tile() + geom_text(aes(label = round(value,2))) + xlab("") + ylab("") + coord_fixed() + theme(axis.text.x = element_text(angle = 60, hjust = 1)) + ggtitle("Correlation Heat Map")
+
+```
+$~$
+
+This plot is a heatmap demonstrating the correlation between all the numeric variables in the dataset. Since some of the variables are just conversions of other variables (Area.miles and Area.km, Elevation and Elevation.m), they have correlations of 1. There was also a strong negative correlation between the elevation variables and the elevation rank, which makes sense since the rank is based off the elevation. The correlation between the area variables and the area rank was surprisingly low, with a value of only -0.39. After that, the next strongest correlation, though still weak, was between area and elevation, with a correlation of 0.21, and a correlation between the ranks of 0.18. There was an extremely weak negative correlation between the percent of people vaccinated and the elevation.
+
+$~$
+
+Area and Elevation
+```{r}
+ggplot(data = areaVax, aes(x = Elevation, y = Area.miles, color = Area.type)) + geom_smooth(method="lm") +
+geom_point(size = 1) + ggtitle("Elevation by Area") + ylab("Area (miles)") + theme_dark()
+```
+$~$
+
+This plot demonstrates the slight positive correlation between total and land area and elevation. The correlation between land and total areas and elevation is quite weak. The correlation between water area and elevation is not as evident based on this graph, though it is a bit stronger. This correlation is likey due to the fact that the parts of texas with lower elevation tend to be a little more wet.
+
+$~$
+
+
+```{r}
+g <- ggplot(areaVax, aes(x=Vaccines, y=Percent.vaccinated))+geom_bar(stat = "summary",fun=mean, color = "light blue", fill = "light blue") +
+  geom_errorbar(stat="summary", fun.data=mean_se) + ylab("Percent vaccinated") + xlab("Vaccine type") + ggtitle("Vaccination rate by Vaccine") + theme_minimal() + scale_y_continuous(breaks = c(10,20,30,40,50,60,70,80,90,100))
+g
+```
+$~$
+
+This plot demonstrates how similar the vaccination rates are across all the different types of vaccines. Even with errorbars, there is very little variation in across the different vaccine types. The vaccine with the lowest average rate is the Meningococcal vaccine. This surprised me because the Menigococcal vaccine is required for entrance into Texas colleges and universities.
+
+
+$~$ 
+
+<font size="4">*Clustering*</font>
+
+$~$
+
+*Cluster data*
+```{r}
+clust_dat <- areaVax %>% select(Area.miles, Elevation, Percent.vaccinated) %>% na.omit()
+```
+
+$~$
+
+*Choosing number of clusters*
+```{r}
+library(cluster)
+sil_width<-vector() 
+for(i in 2:10){  
+  kms <- kmeans(clust_dat,centers=i) #compute k-means
+  sil <- silhouette(kms$cluster,dist(clust_dat)) #get sil widths
+  sil_width[i]<-mean(sil[,3]) 
+}
+ggplot()+geom_line(aes(x=1:10,y=sil_width))+scale_x_continuous(name="k",breaks=1:10) #plots sil widths
+```
+$~$
+
+This charts the silhouette width for various values of k. A larger silhouette width indicates more cohesive clusters. It is better than using just the WSS because it also takes into account the distance between clusters. This graph shows that k=2 results in the highest silhouette width.
+
+$~$
+
+*Cluster Analysis*
+```{r}
+pam1<-clust_dat %>% scale() %>% pam(k=2) #computes the PAM clusters using k=2, scaled to account for difference in the scales of the variables.
+pam1
+```
+This step provides you with the middle most point in the clusters.
+
+$~$
+
+*Visualize Clusters*
+```{r}
+final <- areaVax %>% na.omit() %>% select(-Name) %>% mutate(cluster = as.factor(pam1$clustering))
+library(GGally)
+ggpairs(final, columns=1:4, aes(shape=cluster))
+```
+
+$~$
+
+*Interpret Clusters*
+```{r}
+ggplot(final, aes(x=Area.miles,y=Elevation, color=cluster))+geom_point()
+```
+
+$~$
+
+*Goodness of Fit*
+```{r}
+pam1$silinfo$avg.width
+
+```
+The average silhouette width is 0.40
+
+$~$
+
+*Clustering conclusions*
+While clustering is fun overall, the clustering of this data provided little insight. Beginning with choosing the number of clusters with k-means, the highest silhouette width acheived was only a little more than 0.5. The average silhouette width acheived through PAM was 0.40, making the clustering weak and likely artifical. Not much can really be learned through this clustering. If I were to do clustering on this data again, I would try to add a larger area variable, like region, which would allow for better testing of the clustering. I also think that including water area was not helpful as it included many extreme values (zeroes). Cluster two was much more closely clustered, especially in comparison to cluster one, which is almost definitely artificial since it is so spread out.
+
